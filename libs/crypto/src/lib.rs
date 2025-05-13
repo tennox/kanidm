@@ -17,9 +17,9 @@ use base64::{alphabet, Engine};
 use base64urlsafedata::Base64UrlSafeData;
 use kanidm_hsm_crypto::{HmacKey, Tpm};
 use kanidm_proto::internal::OperationError;
+use md4::{Digest, Md4};
 use openssl::error::ErrorStack as OpenSSLErrorStack;
-use openssl::hash::{self, MessageDigest};
-use openssl::nid::Nid;
+use openssl::hash::MessageDigest;
 use openssl::pkcs5::pbkdf2_hmac;
 use openssl::sha::{Sha1, Sha256, Sha512};
 use rand::Rng;
@@ -52,7 +52,6 @@ const PBKDF2_KEY_LEN: usize = 32;
 const PBKDF2_MIN_NIST_KEY_LEN: usize = 32;
 const PBKDF2_SHA1_MIN_KEY_LEN: usize = 19;
 
-const DS_SHA_SALT_LEN: usize = 8;
 const DS_SHA1_HASH_LEN: usize = 20;
 const DS_SHA256_HASH_LEN: usize = 32;
 const DS_SHA512_HASH_LEN: usize = 64;
@@ -618,10 +617,8 @@ impl TryFrom<&str> for Password {
             .or_else(|| value.strip_prefix("{ssha}"))
         {
             let sh = general_purpose::STANDARD.decode(ds_ssha1).map_err(|_| ())?;
-            let (h, s) = sh.split_at(DS_SHA1_HASH_LEN);
-            if s.len() != DS_SHA_SALT_LEN {
-                return Err(());
-            }
+            let (h, s) = sh.split_at_checked(DS_SHA1_HASH_LEN).ok_or(())?;
+
             return Ok(Password {
                 material: Kdf::SSHA1(s.to_vec(), h.to_vec()),
             });
@@ -649,10 +646,8 @@ impl TryFrom<&str> for Password {
             let sh = general_purpose::STANDARD
                 .decode(ds_ssha256)
                 .map_err(|_| ())?;
-            let (h, s) = sh.split_at(DS_SHA256_HASH_LEN);
-            if s.len() != DS_SHA_SALT_LEN {
-                return Err(());
-            }
+            let (h, s) = sh.split_at_checked(DS_SHA256_HASH_LEN).ok_or(())?;
+
             return Ok(Password {
                 material: Kdf::SSHA256(s.to_vec(), h.to_vec()),
             });
@@ -680,10 +675,8 @@ impl TryFrom<&str> for Password {
             let sh = general_purpose::STANDARD
                 .decode(ds_ssha512)
                 .map_err(|_| ())?;
-            let (h, s) = sh.split_at(DS_SHA512_HASH_LEN);
-            if s.len() != DS_SHA_SALT_LEN {
-                return Err(());
-            }
+            let (h, s) = sh.split_at_checked(DS_SHA512_HASH_LEN).ok_or(())?;
+
             return Ok(Password {
                 material: Kdf::SSHA512(s.to_vec(), h.to_vec()),
             });
@@ -1162,20 +1155,11 @@ impl Password {
                     .flat_map(|i| i.into_iter())
                     .collect();
 
-                let dgst = MessageDigest::from_nid(Nid::MD4).ok_or_else(|| {
-                    error!("Unable to access MD4 - fips mode may be enabled, or you may need to activate the legacy provider.");
-                    error!("For more details, see https://wiki.openssl.org/index.php/OpenSSL_3.0#Providers");
-                    CryptoError::Md4Disabled
-                })?;
+                let mut hasher = Md4::new();
+                hasher.update(&clear_utf16le);
+                let chal_key = hasher.finalize();
 
-                hash::hash(dgst, &clear_utf16le)
-                    .map_err(|e| {
-                        debug!(?e);
-                        error!("Unable to digest MD4 - fips mode may be enabled, or you may need to activate the legacy provider.");
-                        error!("For more details, see https://wiki.openssl.org/index.php/OpenSSL_3.0#Providers");
-                        CryptoError::Md4Disabled
-                    })
-                    .map(|chal_key| chal_key.as_ref() == key)
+                Ok(chal_key.as_slice() == key)
             }
             (Kdf::CRYPT_MD5 { s, h }, _) => {
                 let chal_key = crypt_md5::do_md5_crypt(cleartext.as_bytes(), s);
@@ -1413,9 +1397,15 @@ mod tests {
 
     #[test]
     fn test_password_from_ds_ssha512() {
+        // from #3615
+        let im_pw = "{SSHA512}SvpKVQPfDUw7DbVFLVdhFUj33qx2zwkCNyfdRUEvYTloJt15HDVfhHzx6HLaKFUPBOCa/6D8lDnrybYzW+xSQC2GXBvYpn3ScVEcC+oH20I=";
+        let _r = Password::try_from(im_pw).expect("Failed to parse");
+
+        // Valid hash to import
         let im_pw = "{SSHA512}JwrSUHkI7FTAfHRVR6KoFlSN0E3dmaQWARjZ+/UsShYlENOqDtFVU77HJLLrY2MuSp0jve52+pwtdVl2QUAHukQ0XUf5LDtM";
         let _r = Password::try_from(im_pw).expect("Failed to parse");
 
+        // allow lower case of the hash type
         let im_pw = "{ssha512}JwrSUHkI7FTAfHRVR6KoFlSN0E3dmaQWARjZ+/UsShYlENOqDtFVU77HJLLrY2MuSp0jve52+pwtdVl2QUAHukQ0XUf5LDtM";
         let password = "password";
         let r = Password::try_from(im_pw).expect("Failed to parse");
@@ -1481,21 +1471,6 @@ mod tests {
      * this for this test.
      */
 
-    /*
-    #[cfg(openssl3)]
-    fn setup_openssl_legacy_provider() -> openssl::lib_ctx::LibCtx {
-        let ctx = openssl::lib_ctx::LibCtx::new()
-            .expect("Failed to create new library context");
-
-        openssl::provider::Provider::load(Some(&ctx), "legacy")
-            .expect("Failed to setup provider.");
-
-        eprintln!("setup legacy provider maybe??");
-
-        ctx
-    }
-    */
-
     #[test]
     fn test_password_from_ipa_nt_hash() {
         sketching::test_init();
@@ -1505,19 +1480,7 @@ mod tests {
         let r = Password::try_from(im_pw).expect("Failed to parse");
         assert!(r.requires_upgrade());
 
-        match r.verify(password) {
-            Ok(r) => assert!(r),
-            Err(_) =>
-            {
-                #[allow(clippy::panic)]
-                if cfg!(openssl3) {
-                    warn!("To run this test, enable the legacy provider.");
-                } else {
-                    panic!("openssl3 not enabled");
-                }
-            }
-        }
-
+        assert!(r.verify(password).expect("Failed to hash"));
         let im_pw = "ipaNTHash: pS43DjQLcUYhaNF_cd_Vhw==";
         Password::try_from(im_pw).expect("Failed to parse");
     }
@@ -1530,18 +1493,7 @@ mod tests {
         let password = "password";
         let r = Password::try_from(im_pw).expect("Failed to parse");
         assert!(r.requires_upgrade());
-        match r.verify(password) {
-            Ok(r) => assert!(r),
-            Err(_) =>
-            {
-                #[allow(clippy::panic)]
-                if cfg!(openssl3) {
-                    warn!("To run this test, enable the legacy provider.");
-                } else {
-                    panic!("OpenSSL3 feature not enabled")
-                }
-            }
-        }
+        assert!(r.verify(password).expect("Failed to hash"));
     }
 
     #[test]

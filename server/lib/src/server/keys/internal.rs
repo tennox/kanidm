@@ -14,6 +14,7 @@ use compact_jwt::{
     JwsSignerToVerifier,
 };
 use smolset::SmolSet;
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound::{Included, Unbounded};
 use std::sync::Arc;
@@ -196,8 +197,6 @@ impl KeyObjectInternalJweA128GCM {
     fn get_valid_cipher(&self, time: Duration) -> Option<&JweA128KWEncipher> {
         let ct_secs = time.as_secs();
 
-        trace!(active = ?self.active);
-
         self.active
             .range((Unbounded, Included(ct_secs)))
             .next_back()
@@ -214,6 +213,7 @@ impl KeyObjectInternalJweA128GCM {
         }
     }
 
+    #[instrument(level = "debug", name = "keyobject::jwe_a128_gcm::new", skip_all)]
     fn new_active(&mut self, valid_from: Duration, cid: &Cid) -> Result<(), OperationError> {
         let valid_from = valid_from.as_secs();
 
@@ -451,7 +451,7 @@ impl KeyObjectInternalJwtEs256 {
         let valid_from = valid_from.as_secs();
 
         for private_der in import_keys {
-            let signer = JwsEs256Signer::from_es256_der(private_der).map_err(|err| {
+            let mut signer = JwsEs256Signer::from_es256_der(private_der).map_err(|err| {
                 error!(?err, "Unable to load imported es256 DER signer");
                 OperationError::KP0028KeyObjectImportJwsEs256DerInvalid
             })?;
@@ -467,6 +467,9 @@ impl KeyObjectInternalJwtEs256 {
             // We need to use the legacy KID for imported objects
             let kid = signer.get_legacy_kid().to_string();
             debug!(?kid, "imported key");
+
+            // Indicate to the signer we wish to use the legacy kid for this signer.
+            signer.set_kid(kid.as_str());
 
             self.active.insert(valid_from, signer.clone());
 
@@ -486,6 +489,7 @@ impl KeyObjectInternalJwtEs256 {
         Ok(())
     }
 
+    #[instrument(level = "debug", name = "keyobject::jws_es256::new", skip_all)]
     fn new_active(&mut self, valid_from: Duration, cid: &Cid) -> Result<(), OperationError> {
         let valid_from = valid_from.as_secs();
 
@@ -575,10 +579,13 @@ impl KeyObjectInternalJwtEs256 {
 
         let status = match status {
             KeyStatus::Valid => {
-                let signer = JwsEs256Signer::from_es256_der(der).map_err(|err| {
+                let mut signer = JwsEs256Signer::from_es256_der(der).map_err(|err| {
                     error!(?err, ?id, "Unable to load es256 DER signer");
                     OperationError::KP0013KeyObjectJwsEs256DerInvalid
                 })?;
+
+                // Ensure that the signer has a coherent kid
+                signer.set_kid(id.as_str());
 
                 let verifier = signer.get_verifier().map_err(|err| {
                     error!(?err, "Unable to retrieve verifier from signer");
@@ -707,9 +714,15 @@ impl KeyObjectInternalJwtEs256 {
     }
 
     fn public_jwks(&self) -> JwkKeySet {
-        let keys = self
-            .all
-            .iter()
+        // A lot of applications assume the first item in the set is the latest
+        // key, so we need to return that first.
+        let mut signing_keys: Vec<_> = self.all.iter().collect();
+
+        // Sort by the time they are valid from.
+        signing_keys.sort_unstable_by_key(|(_, k)| Reverse(k.valid_from));
+
+        let keys = signing_keys
+            .into_iter()
             .filter_map(|(_, es256)| match &es256.status {
                 InternalJwtEs256Status::Valid { verifier, .. }
                 | InternalJwtEs256Status::Retained { verifier, .. } => verifier
@@ -823,7 +836,7 @@ impl KeyObjectInternalJwtRs256 {
         let valid_from = valid_from.as_secs();
 
         for private_der in import_keys {
-            let signer = JwsRs256Signer::from_rs256_der(private_der).map_err(|err| {
+            let mut signer = JwsRs256Signer::from_rs256_der(private_der).map_err(|err| {
                 error!(?err, "Unable to load imported rs256 DER signer");
                 OperationError::KP0045KeyObjectImportJwsRs256DerInvalid
             })?;
@@ -839,6 +852,9 @@ impl KeyObjectInternalJwtRs256 {
             // We need to use the legacy KID for imported objects
             let kid = signer.get_legacy_kid().to_string();
             debug!(?kid, "imported key");
+
+            // Indicate to the signer we wish to use the legacy kid for this signer.
+            signer.set_kid(kid.as_str());
 
             self.active.insert(valid_from, signer.clone());
 
@@ -858,6 +874,7 @@ impl KeyObjectInternalJwtRs256 {
         Ok(())
     }
 
+    #[instrument(level = "debug", name = "keyobject::jws_rs256::new", skip_all)]
     fn new_active(&mut self, valid_from: Duration, cid: &Cid) -> Result<(), OperationError> {
         let valid_from = valid_from.as_secs();
 
@@ -947,10 +964,13 @@ impl KeyObjectInternalJwtRs256 {
 
         let status = match status {
             KeyStatus::Valid => {
-                let signer = JwsRs256Signer::from_rs256_der(der).map_err(|err| {
+                let mut signer = JwsRs256Signer::from_rs256_der(der).map_err(|err| {
                     error!(?err, ?id, "Unable to load rs256 DER signer");
                     OperationError::KP0052KeyObjectJwsRs256DerInvalid
                 })?;
+
+                // Ensure that the signer has a coherent kid
+                signer.set_kid(id.as_str());
 
                 let verifier = signer.get_verifier().map_err(|err| {
                     error!(?err, "Unable to retrieve verifier from signer");
@@ -1079,8 +1099,14 @@ impl KeyObjectInternalJwtRs256 {
     }
 
     fn public_jwks(&self) -> JwkKeySet {
-        let keys = self
-            .all
+        // A lot of applications assume the first item in the set is the latest
+        // key, so we need to return that first.
+        let mut signing_keys: Vec<_> = self.all.iter().collect();
+
+        // Sort by the time they are valid from.
+        signing_keys.sort_unstable_by_key(|(_, k)| Reverse(k.valid_from));
+
+        let keys = signing_keys
             .iter()
             .filter_map(|(key_id, rs256)| {
                 error!(?key_id);
@@ -1284,6 +1310,7 @@ impl KeyObjectT for KeyObjectInternal {
         Ok(None)
     }
 
+    #[instrument(level = "debug", name = "keyobject::jws_es256_import", skip_all)]
     fn jws_es256_import(
         &mut self,
         import_keys: &SmolSet<[Vec<u8>; 1]>,
@@ -1397,6 +1424,7 @@ impl KeyObjectT for KeyObjectInternal {
         ])
     }
 
+    #[instrument(level = "debug", name = "keyobject::jws_rs256_import", skip_all)]
     fn jws_rs256_import(
         &mut self,
         import_keys: &SmolSet<[Vec<u8>; 1]>,
