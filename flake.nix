@@ -2,7 +2,7 @@
   description = "Description for the project";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05"; # or use /nixos-unstable to get latest packages, but maybe less caching
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11"; # or use /nixos-unstable to get latest packages, but maybe less caching
     systems.url = "github:nix-systems/default"; # (i) allows overriding systems easily, see https://github.com/nix-systems/nix-systems#consumer-usage
     devenv.url = "github:cachix/devenv";
     rust-overlay.url = "github:oxalica/rust-overlay"; # TODO: replace with fenix?
