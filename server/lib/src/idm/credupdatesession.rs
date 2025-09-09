@@ -1667,7 +1667,12 @@ impl IdmServerCredUpdateTransaction<'_> {
         let entropy = zxcvbn(cleartext, related_inputs);
 
         // PW's should always be enforced as strong as possible.
-        if entropy.score() < Score::Four {
+        let min_score = match PW_MIN_ZXCVBN_SCORE {
+            3 => Score::Three,
+            4 => Score::Four,
+            _ => Score::Four, // Default to highest security if invalid value
+        };
+        if entropy.score() < min_score {
             // The password is too week as per:
             // https://docs.rs/zxcvbn/2.0.0/zxcvbn/struct.Entropy.html
             let feedback: zxcvbn::feedback::Feedback = entropy

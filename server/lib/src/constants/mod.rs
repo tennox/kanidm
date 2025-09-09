@@ -124,6 +124,8 @@ pub const AUTH_SESSION_TIMEOUT: u64 = 300;
 // 5 minute mfa reg window
 pub const MFAREG_SESSION_TIMEOUT: u64 = 300;
 pub const PW_MIN_LENGTH: u32 = 10;
+// Minimum zxcvbn password score required (3-4, where 4 is strongest)
+pub const PW_MIN_ZXCVBN_SCORE: u8 = 3;
 
 // Maximum - Sessions have no upper bound.
 pub const MAXIMUM_AUTH_SESSION_EXPIRY: u32 = u32::MAX;
