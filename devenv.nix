@@ -6,7 +6,6 @@
     nix.enable = true;
     rust = {
       enable = true; # https://github.com/cachix/devenv/blob/main/src/modules/languages/rust.nix
-      channel = "nightly";
     };
   };
 
@@ -28,7 +27,7 @@
 
   difftastic.enable = true; # https://devenv.sh/integrations/difftastic/
 
-  pre-commit.hooks = {
+  git-hooks.hooks = {
     # Docs: https://devenv.sh/pre-commit-hooks/
     # available pre-configured hooks: https://devenv.sh/reference/options/#pre-commithooks
     # adding hooks which are not included: https://github.com/cachix/pre-commit-hooks.nix/issues/31
