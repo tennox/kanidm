@@ -15,6 +15,8 @@
     cargo-watch
     bacon
     clang
+    docker
+    go-task
 
     pkg-config
     openssl

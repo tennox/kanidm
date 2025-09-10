@@ -1,0 +1,8 @@
+version: '3'
+
+tasks:
+  build:docker:
+    desc: Build the main Kanidmd server Docker image
+    aliases: [docker]
+    cmds:
+      - docker build -f server/Dockerfile -t kanidm/server:devel --build-arg "KANIDM_BUILD_PROFILE=container_generic" --build-arg "KANIDM_FEATURES=" .
